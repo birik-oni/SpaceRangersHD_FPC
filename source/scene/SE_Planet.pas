@@ -322,7 +322,7 @@ begin
     CollisionCircle := AllocatePlanetCollisionCircle;
     CollisionCircle.Position.X := Position.X;
     CollisionCircle.Position.Y := Position.Y;
-    CollisionCircle.Radius := Radius;
+    CollisionCircle.Radius := Radius * 3;
     RebuildRings;
     RebuildSurfaceAnimation;
     RotationTimer := Space.CreateTimer(0, RotationTimerInterval, AdvanceRotationTimer, 0);
@@ -501,35 +501,18 @@ begin
     RingControl1.SetPositionModeW(True);
     RingControl1.SetDepth(PlanetControl.Depth - 0.01);
     RingControl1.SetImagePath(Path + '_1');
-    RingControl1.SetSize(RingControl1.GetContentSize);
+    RingControl1.SetSize(Classes.Point(RingControl1.GetContentSize.X * 3, RingControl1.GetContentSize.Y * 3));
+    RingControl1.AutoUpdateFlags := RingControl1.AutoUpdateFlags and (not $02);  
     RingControl1.SetPosition(PlanetControl.LocalPosition);
     RingControl2 := TImageGI.Create(Space.MapPanel);
     RingControl2.SetPositionModeW(True);
     RingControl2.SetDepth(PlanetControl.Depth + 0.01);
     RingControl2.SetImagePath(Path + '_2');
-    RingControl2.SetSize(RingControl2.GetContentSize);
+    RingControl2.SetSize(Classes.Point(RingControl2.GetContentSize.X * 3, RingControl2.GetContentSize.Y * 3));
+    RingControl2.AutoUpdateFlags := RingControl2.AutoUpdateFlags and (not $02);  
     RingControl2.SetPosition(PlanetControl.LocalPosition);
-    FirstBounds.TopLeft := RingControl1.GetContentOrigin;
-    FirstBounds.BottomRight := AddPoints(FirstBounds.TopLeft, RingControl1.ClientSize);
-    SecondBounds.TopLeft := RingControl2.GetContentOrigin;
-    SecondBounds.BottomRight := AddPoints(SecondBounds.TopLeft, RingControl2.ClientSize);
-    Types.UnionRect(Bounds, FirstBounds, SecondBounds);
-    Center := Classes.Point((Bounds.Right + Bounds.Left) div 2, (Bounds.Bottom + Bounds.Top) div 2);
-    Offset := Classes.Point(0, Bounds.Right div 2 - Bounds.Bottom div 2);
-    if RingKind = 8 then
-      Inc(Offset.Y, GiScalePixels(10));
-    if RingKind = 8 then
-      Inc(Offset.X, GiScalePixels(5));
-    if RingKind = 21 then
-      Inc(Offset.Y, GiScalePixels(25))
-    else if RingKind = 22 then
-      Inc(Offset.Y, GiScalePixels(15));
-    if RingKind = 21 then
-      Dec(Offset.X, GiScalePixels(8))
-    else if RingKind = 22 then
-      Dec(Offset.X, GiScalePixels(5));
-    RingControl1.SetOrigin(SubtractPoints(SubtractPoints(Center, FirstBounds.TopLeft), Offset));
-    RingControl2.SetOrigin(SubtractPoints(SubtractPoints(Center, SecondBounds.TopLeft), Offset));
+      RingControl1.SetOrigin(Classes.Point(RingControl1.ClientSize.X div 2, RingControl1.ClientSize.Y div 2));
+      RingControl2.SetOrigin(Classes.Point(RingControl2.ClientSize.X div 2, RingControl2.ClientSize.Y div 2));
   end;
 end;
 
@@ -658,8 +641,8 @@ begin
     begin
       CollisionCircle.Position.X := Position.X;
       CollisionCircle.Position.Y := Position.Y;
-      CollisionCircle.Radius := Radius;
-      CollisionCircle.RadiusSquared := Radius * Radius;
+      CollisionCircle.Radius := Radius * 3;
+CollisionCircle.RadiusSquared := (Radius * 3) * (Radius * 3);
     end;
     UpdateLightAngleFromStar;
     if IsAttachedToSpace then
@@ -893,22 +876,31 @@ begin
 end;
 
 function TPlanetSE.HitTestCursor: Boolean;
+var
+  CursorPos, PlanetCenter: TPoint;
+  DX, DY, EffectiveRadius: Integer;
 begin
   if not IsAttachedToSpace then
   begin
     Result := False;
     Exit;
   end;
-  Result := False;
   if IsRuins then
   begin
     if RuinsAnimationControl <> nil then
       Result := RuinsAnimationControl.HitTestPixel(RuinsAnimationControl.MessageLoop.GetCursorPoint)
     else if RuinsImageControl <> nil then
       Result := RuinsImageControl.HitTestPixel(RuinsImageControl.MessageLoop.GetCursorPoint);
-  end
-  else
-    Result := PlanetControl.HitTestCursor;
+    Exit;
+  end;
+  // SR3D: круглая проверка с увеличенным радиусом
+  CursorPos := PlanetControl.MessageLoop.GetCursorPoint;
+  PlanetCenter.X := PlanetControl.AbsolutePosition.X - PlanetControl.OriginPoint.X + PlanetControl.ClientSize.X div 2;
+  PlanetCenter.Y := PlanetControl.AbsolutePosition.Y - PlanetControl.OriginPoint.Y + PlanetControl.ClientSize.Y div 2;
+  DX := CursorPos.X - PlanetCenter.X;
+  DY := CursorPos.Y - PlanetCenter.Y;
+  EffectiveRadius := PlanetControl.ClientSize.X div 2;
+  Result := (DX * DX + DY * DY) <= (EffectiveRadius * EffectiveRadius);
 end;
 
 procedure TPlanetSE.DrawMap;
