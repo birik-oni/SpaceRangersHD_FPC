@@ -15,11 +15,19 @@ uses
   GI_MessageLoop,
   GI_Planet,
   GR_GraphBuf,
-  SE_Space;
+  SE_Space,
+  Direct3D9;
 
 type
 
   TPlanetSE = class;
+
+  // SR3D: ring image with x3 auto-scale (handles async image loading)
+  TRingImageGI = class(TImageGI)
+  public
+    procedure UpdateAutoGeometry; override;
+    procedure Draw(ClipRect: TRect); override;
+  end;
 
   PointerToTPlanetCollisionCircle = ^TPlanetCollisionCircle;
 
@@ -41,6 +49,7 @@ type
     Radius: Single;
     RadiusSquared: Single;
   end;
+
 
   TPlanetSE = class(TObjectSE)
     ImagePath: WideString;
@@ -148,12 +157,14 @@ uses
   GlobalsV,
   Globals,
   GR_Main,
+  GR_DX,
   GI_Main,
   aConst,
   aMyFunction,
   EC_Mem,
   EC_Cache,
   EC_CacheBitmap,
+  EC_CacheGI,
   SE_Process;
 
 constructor TPlanetSE.Create;
@@ -166,7 +177,77 @@ begin
   IsRuins := FindTextOffsetW(AGraphKey, 'Ruins') = 0;
   inherited Create(AGraphKey, UnusedPosition);
 end;
+procedure TRingImageGI.UpdateAutoGeometry;
+var
+  ContentSize: TPoint;
+begin
+  inherited UpdateAutoGeometry;
+  ContentSize := GetContentSize;
+  if (ContentSize.X > 0) and (ContentSize.Y > 0) then
+    SetSize(Classes.Point(ContentSize.X * 3, ContentSize.Y * 3));
+end;
 
+procedure TRingImageGI.Draw(ClipRect: TRect);
+var
+  Image: TCGiEC;
+  Width, Height, Left, Top, DrawWidth, DrawHeight: Integer;
+  Texture: IDirect3DTexture9;
+  Desc: TD3DSurfaceDesc;
+  SR3D_Drawn: Boolean;
+begin
+  // SR3D: рисуем кольцо ×3 через DrawTextureSized
+  SR3D_Drawn := False;
+  if (GiImageControl <> nil) and HardwareRenderingEnabled then
+  begin
+    Image := AcquireCachedGi(GiImageControl.ImageCache);
+    if Image <> nil then
+    begin
+      try
+        Width := Image.Image.GetContentSize.X;
+        Height := Image.Image.GetContentSize.Y;
+        if (Width > 0) and (Height > 0) then
+        begin
+                    DrawWidth := Width * 3;
+          DrawHeight := Height * 3;
+          Left := AbsolutePosition.X - OriginPoint.X + (ClientSize.X - DrawWidth) div 2;
+          Top := AbsolutePosition.Y - OriginPoint.Y + (ClientSize.Y - DrawHeight) div 2;
+          // Учитываем TileOrigin (смещение картинки внутри текстуры)
+          if Image.UsesTiledSurfaces and (Image.TileCount > 0) then
+          begin
+            Left := Left + Image.GetTileOrigin(0).X * 3;
+            Top := Top + Image.GetTileOrigin(0).Y * 3;
+          end;
+          Texture := Image.GetOrCreateSurface(0);
+          if Texture <> nil then
+          begin
+            Texture.GetLevelDesc(0, Desc);
+            DrawTextureSized(
+                Texture,
+                Left,
+                Top,
+                Desc.Width * 3,
+                Desc.Height * 3,
+                GetAlpha,
+                RgbWhite,
+                @ClipRect,
+                False,
+                False
+            );
+            SR3D_Drawn := True;
+            // Скрываем дочерний GiImageControl только когда нарисовали сами
+            GiImageControl.SetActive(False);
+          end;
+        end;
+      finally
+        GiImageControl.ImageCache.Release;
+      end;
+    end;
+  end;
+  // Если не нарисовали сами — рисуем стандартно (с дочерними)
+  if not SR3D_Drawn then
+    inherited Draw(ClipRect);
+end;
+    
 procedure TPlanetSE.CopyTo(Destination: TObjectSE);
 begin
   inherited CopyTo(Destination);
@@ -498,22 +579,43 @@ begin
       Path := Path + '4'
     else
       RaiseWideMessage('TPlanetSE.CreateRing');
-    RingControl1 := TImageGI.Create(Space.MapPanel);
+        RingControl1 := TRingImageGI.Create(Space.MapPanel);
     RingControl1.SetPositionModeW(True);
     RingControl1.SetDepth(PlanetControl.Depth - 0.01);
     RingControl1.SetImagePath(Path + '_1');
     RingControl1.SetSize(Classes.Point(RingControl1.GetContentSize.X * 3, RingControl1.GetContentSize.Y * 3));
-    RingControl1.AutoUpdateFlags := RingControl1.AutoUpdateFlags and (not $02);  
+    RingControl1.AutoUpdateFlags := RingControl1.AutoUpdateFlags and not $02;
     RingControl1.SetPosition(PlanetControl.LocalPosition);
-    RingControl2 := TImageGI.Create(Space.MapPanel);
+    RingControl2 := TRingImageGI.Create(Space.MapPanel);
     RingControl2.SetPositionModeW(True);
     RingControl2.SetDepth(PlanetControl.Depth + 0.01);
     RingControl2.SetImagePath(Path + '_2');
     RingControl2.SetSize(Classes.Point(RingControl2.GetContentSize.X * 3, RingControl2.GetContentSize.Y * 3));
-    RingControl2.AutoUpdateFlags := RingControl2.AutoUpdateFlags and (not $02);  
+    RingControl2.AutoUpdateFlags := RingControl2.AutoUpdateFlags and not $02;
     RingControl2.SetPosition(PlanetControl.LocalPosition);
-      RingControl1.SetOrigin(Classes.Point(RingControl1.ClientSize.X div 2, RingControl1.ClientSize.Y div 2));
-      RingControl2.SetOrigin(Classes.Point(RingControl2.ClientSize.X div 2, RingControl2.ClientSize.Y div 2));
+    RingControl1.SetOrigin(Classes.Point(RingControl1.ClientSize.X div 2, RingControl1.ClientSize.Y div 2));
+    RingControl2.SetOrigin(Classes.Point(RingControl2.ClientSize.X div 2, RingControl2.ClientSize.Y div 2));
+    FirstBounds.TopLeft := RingControl1.GetContentOrigin;
+    FirstBounds.BottomRight := AddPoints(FirstBounds.TopLeft, RingControl1.ClientSize);
+    SecondBounds.TopLeft := RingControl2.GetContentOrigin;
+    SecondBounds.BottomRight := AddPoints(SecondBounds.TopLeft, RingControl2.ClientSize);
+    Types.UnionRect(Bounds, FirstBounds, SecondBounds);
+    Center := Classes.Point((Bounds.Right + Bounds.Left) div 2, (Bounds.Bottom + Bounds.Top) div 2);
+    Offset := Classes.Point(0, Bounds.Right div 2 - Bounds.Bottom div 2);
+    if RingKind = 8 then
+      Inc(Offset.Y, GiScalePixels(10));
+    if RingKind = 8 then
+      Inc(Offset.X, GiScalePixels(5));
+    if RingKind = 21 then
+      Inc(Offset.Y, GiScalePixels(25))
+    else if RingKind = 22 then
+      Inc(Offset.Y, GiScalePixels(15));
+    if RingKind = 21 then
+      Dec(Offset.X, GiScalePixels(8))
+    else if RingKind = 22 then
+      Dec(Offset.X, GiScalePixels(5));
+    RingControl1.SetOrigin(SubtractPoints(SubtractPoints(Center, FirstBounds.TopLeft), Offset));
+    RingControl2.SetOrigin(SubtractPoints(SubtractPoints(Center, SecondBounds.TopLeft), Offset));
   end;
 end;
 
