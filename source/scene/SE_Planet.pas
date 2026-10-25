@@ -178,13 +178,10 @@ begin
   inherited Create(AGraphKey, UnusedPosition);
 end;
 procedure TRingImageGI.UpdateAutoGeometry;
-var
-  ContentSize: TPoint;
 begin
   inherited UpdateAutoGeometry;
-  ContentSize := GetContentSize;
-  if (ContentSize.X > 0) and (ContentSize.Y > 0) then
-    SetSize(Classes.Point(ContentSize.X * 3, ContentSize.Y * 3));
+  // SR3D: не меняем ClientSize — ×3 применяется только в Draw
+  // Это позволяет ванильному SetOrigin(SubtractPoints...) работать правильно
 end;
 
 procedure TRingImageGI.Draw(ClipRect: TRect);
@@ -209,14 +206,9 @@ begin
         begin
                     DrawWidth := Width * 3;
           DrawHeight := Height * 3;
-          Left := AbsolutePosition.X - OriginPoint.X + (ClientSize.X - DrawWidth) div 2;
-          Top := AbsolutePosition.Y - OriginPoint.Y + (ClientSize.Y - DrawHeight) div 2;
-          // Учитываем TileOrigin (смещение картинки внутри текстуры)
-          if Image.UsesTiledSurfaces and (Image.TileCount > 0) then
-          begin
-            Left := Left + Image.GetTileOrigin(0).X * 3;
-            Top := Top + Image.GetTileOrigin(0).Y * 3;
-          end;
+                    // Центрируем по HitTestBounds (которая уже учитывает Origin с Offset)
+          Left := (HitTestBounds.Right + HitTestBounds.Left - DrawWidth) div 2;
+          Top := (HitTestBounds.Bottom + HitTestBounds.Top - DrawHeight) div 2;
           Texture := Image.GetOrCreateSurface(0);
           if Texture <> nil then
           begin
@@ -579,22 +571,18 @@ begin
       Path := Path + '4'
     else
       RaiseWideMessage('TPlanetSE.CreateRing');
-        RingControl1 := TRingImageGI.Create(Space.MapPanel);
+            RingControl1 := TRingImageGI.Create(Space.MapPanel);
     RingControl1.SetPositionModeW(True);
     RingControl1.SetDepth(PlanetControl.Depth - 0.01);
     RingControl1.SetImagePath(Path + '_1');
-    RingControl1.SetSize(Classes.Point(RingControl1.GetContentSize.X * 3, RingControl1.GetContentSize.Y * 3));
-    RingControl1.AutoUpdateFlags := RingControl1.AutoUpdateFlags and not $02;
+    RingControl1.SetSize(RingControl1.GetContentSize);
     RingControl1.SetPosition(PlanetControl.LocalPosition);
     RingControl2 := TRingImageGI.Create(Space.MapPanel);
     RingControl2.SetPositionModeW(True);
     RingControl2.SetDepth(PlanetControl.Depth + 0.01);
     RingControl2.SetImagePath(Path + '_2');
-    RingControl2.SetSize(Classes.Point(RingControl2.GetContentSize.X * 3, RingControl2.GetContentSize.Y * 3));
-    RingControl2.AutoUpdateFlags := RingControl2.AutoUpdateFlags and not $02;
+    RingControl2.SetSize(RingControl2.GetContentSize);
     RingControl2.SetPosition(PlanetControl.LocalPosition);
-    RingControl1.SetOrigin(Classes.Point(RingControl1.ClientSize.X div 2, RingControl1.ClientSize.Y div 2));
-    RingControl2.SetOrigin(Classes.Point(RingControl2.ClientSize.X div 2, RingControl2.ClientSize.Y div 2));
     FirstBounds.TopLeft := RingControl1.GetContentOrigin;
     FirstBounds.BottomRight := AddPoints(FirstBounds.TopLeft, RingControl1.ClientSize);
     SecondBounds.TopLeft := RingControl2.GetContentOrigin;
@@ -618,6 +606,7 @@ begin
     RingControl2.SetOrigin(SubtractPoints(SubtractPoints(Center, SecondBounds.TopLeft), Offset));
   end;
 end;
+
 
 procedure TPlanetSE.RebuildSurfaceAnimation;
 var
