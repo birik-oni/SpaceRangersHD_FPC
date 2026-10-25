@@ -410,7 +410,7 @@ begin
         Population := 1000000;
         Satellite := TSputnik.Create;
         Satellites.Add(Satellite);
-        MinOrbitRadius := Round(Radius * 1.3);
+        MinOrbitRadius := Round(Radius * 1.3 * 3);
         RetainSpaceObject(TObjectSE(Satellite.Graphic), TSputnikSE.Create('Sputnik.Moon', Classes.Point(0, 0)));
         Satellite.Graphic.DepthOrder := 0;
         Satellite.Graphic.OrbitCenter := GetPosition;
@@ -443,8 +443,8 @@ begin
         begin
           Satellite := TSputnik.Create;
           Satellites.Add(Satellite);
-          MinOrbitRadius := Round(Radius * 1.3);
-          MaxOrbitRadius := Radius * 2;
+          MinOrbitRadius := Round(Radius * 1.3 * 3);
+          MaxOrbitRadius := Radius * 2 * 3;
           RetainSpaceObject(TObjectSE(Satellite.Graphic), TSputnikSE.Create('Sputnik.Mars' + IntToStr(I), Classes.Point(0, 0)));
           Satellite.Graphic.DepthOrder := I;
           Satellite.Graphic.OrbitCenter := GetPosition;
@@ -477,8 +477,8 @@ begin
         begin
           Satellite := TSputnik.Create;
           Satellites.Add(Satellite);
-          MinOrbitRadius := Round(Radius * 1.3);
-          MaxOrbitRadius := Radius * 2;
+          MinOrbitRadius := Round(Radius * 1.3 * 3);
+          MaxOrbitRadius := Radius * 2 * 3;
           RetainSpaceObject(
               TObjectSE(Satellite.Graphic),
               TSputnikSE.Create(
@@ -545,8 +545,8 @@ begin
         begin
           Satellite := TSputnik.Create;
           Satellites.Add(Satellite);
-          MinOrbitRadius := Round(Radius * 1.3);
-          MaxOrbitRadius := Radius * 2;
+          MinOrbitRadius := Round(Radius * 1.3 * 3);
+          MaxOrbitRadius := Radius * 2 * 3;
           RetainSpaceObject(
               TObjectSE(Satellite.Graphic),
               TSputnikSE.Create(
@@ -838,10 +838,10 @@ begin
       Graphic.OrbitalVelocity := OrbitalVelocity;
       SatelliteConfig := GameDataConfig.GetBlockByPath('SE.Sputnik');
       if Graphic.RingKind = 0 then
-        MinOrbitRadius := Round(Radius * 1.3)
+        MinOrbitRadius := Round(Radius * 1.3 * 3)
       else
-        MinOrbitRadius := Round(Radius * 1.5);
-      MaxOrbitRadius := Radius * 2;
+        MinOrbitRadius := Round(Radius * 1.5 * 3);
+      MaxOrbitRadius := Radius * 2 * 3;
       if Graphic.RingKind = 0 then
         SatelliteCount := NextRandomIntRange(1, 4, RandomState)
       else if Graphic.RingKind < 20 then
@@ -1321,10 +1321,10 @@ begin
   Graphic.OrbitalVelocity := OrbitalVelocity;
   SatelliteConfig := GameDataConfig.GetBlockByPath('SE.Sputnik');
   if Graphic.RingKind = 0 then
-    MinOrbitRadius := Round(Radius * 1.3)
+    MinOrbitRadius := Round(Radius * 1.3 * 3)
   else
-    MinOrbitRadius := Round(Radius * 1.5);
-  MaxOrbitRadius := Radius * 2;
+    MinOrbitRadius := Round(Radius * 1.5 * 3);
+  MaxOrbitRadius := Radius * 2 * 3;
   if Graphic.RingKind = 0 then
     SatelliteCount := NextRandomIntRange(1, 4, RandomState)
   else if Graphic.RingKind < 20 then

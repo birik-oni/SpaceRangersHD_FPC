@@ -173,7 +173,7 @@ begin
   if not IsAttachedToSpace then
     Exit;
   Angle := HeadingDegreesToRadians(OrbitAngle);
-  OrbitX := Sin(Angle) * OrbitRadius * 3;
+  OrbitX := Sin(Angle) * OrbitRadius;
   OrbitY := Cos(Angle) * -OrbitRadius;
   X := InclinationCos * RotationCos * OrbitX + -RotationSin * OrbitY + OrbitCenter.X;
   Y := InclinationCos * RotationSin * OrbitX + OrbitY * RotationCos + OrbitCenter.Y;
