@@ -229,7 +229,8 @@ begin
     begin
       RuinsAnimationControl := TgaiGI.Create(Space.MapPanel);
       RuinsAnimationControl.SetImagePath(RuinsAnimationPath);
-      RuinsAnimationControl.SetSize(RuinsAnimationControl.GetContentSize);
+      RuinsAnimationControl.SetSize(Classes.Point(RuinsAnimationControl.GetContentSize.X * 3, RuinsAnimationControl.GetContentSize.Y * 3));
+      RuinsAnimationControl.AutoUpdateFlags := RuinsAnimationControl.AutoUpdateFlags and not $02;
       RuinsAnimationControl.SetOrigin(HalfPoint(RuinsAnimationControl.ClientSize));
       RuinsAnimationControl.SetDepthByName(DepthExpression);
       RuinsAnimationControl.SetPosition(TruncatePointF(Position));
@@ -536,8 +537,8 @@ begin
   begin
     SurfaceAnimationIndex := -1;
     Scale := (Radius - 60) / 40 * 0.7 + 0.3;
-    SurfaceAnimationOffset.X := GiScalePixels(Round(PlanetAdvertDefinitions[SurfaceAnimationMask shr 24].Position.X * Scale));
-    SurfaceAnimationOffset.Y := GiScalePixels(Round(PlanetAdvertDefinitions[SurfaceAnimationMask shr 24].Position.Y * Scale));
+    SurfaceAnimationOffset.X := GiScalePixels(Round(PlanetAdvertDefinitions[SurfaceAnimationMask shr 24].Position.X * Scale)) * 3;
+    SurfaceAnimationOffset.Y := GiScalePixels(Round(PlanetAdvertDefinitions[SurfaceAnimationMask shr 24].Position.Y * Scale)) * 3;
     SurfaceAnimationFrame := 0;
     SurfaceImageControl := TImageGI.Create(Space.MapPanel);
     SurfaceImageControl.SetPositionModeW(True);
@@ -588,7 +589,8 @@ begin
             .Adverts[PlanetAdvertDefinitions[SurfaceAnimationMask shr 24].Lists[SurfaceAnimationIndex].Indices[SurfaceAnimationFrame]]
             .Image2
     );
-  SurfaceImageControl.SetSize(SurfaceImageControl.GetContentSize);
+  SurfaceImageControl.SetSize(Classes.Point(SurfaceImageControl.GetContentSize.X * 3, SurfaceImageControl.GetContentSize.Y * 3));
+  SurfaceImageControl.AutoUpdateFlags := SurfaceImageControl.AutoUpdateFlags and not $02;
   SurfaceImageControl.SetOrigin(HalfPoint(SurfaceImageControl.ClientSize));
   SurfaceImageControl.SetPosition(AddPoints(PlanetControl.LocalPosition, SurfaceAnimationOffset));
   if SurfaceImageControl.GaiImageControl <> nil then
