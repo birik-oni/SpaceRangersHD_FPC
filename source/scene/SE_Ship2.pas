@@ -131,7 +131,8 @@ uses
   Globals,
   GlobalsV,
   GR_Main,
-  SE_Process;
+  SE_Process,
+  SE_Ship3D;
 
 destructor TShip2AnimSE.Destroy;
 begin
@@ -379,7 +380,7 @@ begin
     Stage := 1;
     inherited AttachToSpace(ASpace);
     Stage := 2;
-    Image := TRotateImage5GI.Create(nil);
+    Image := TShip3DGI.Create(nil);
     Stage := 3;
     if Space.MapPanel <> nil then
       Space.MapPanel.AttachOwnedChild(Image);
