@@ -24,7 +24,11 @@ type
 implementation
 
 uses
-  SysUtils;
+  SysUtils
+  {$IFDEF MSWINDOWS}
+  , Windows
+  {$ENDIF}
+  ;
 
 type
   TD3DMatrix = array[0..3, 0..3] of Single;
@@ -133,27 +137,46 @@ var
   cx, cy, cz, maxExt, scl: Single;
   v0, v1, v2: TVtx3D;
   nx, ny, nz, nlen: Single;
-  Paths: array[0..3] of string;
+  Paths: array[0..8] of string;
+  DebugMsg: string;
 begin
   if gLoaded or gLoadAttempted then Exit;
   gLoadAttempted := True;
 
+  // Multiple search paths — relative + absolute, both underscore and space
   Paths[0] := 'data/models/1405_plane.obj';
-  Paths[1] := 'D:\SR3D\SpaceRangersHD_FPC\data\models\1405_plane.obj';
-  Paths[2] := 'D:\Games\Space Rangers HD A War Apart\data\models\1405_plane.obj';
-  Paths[3] := '1405 Plane.obj';
+  Paths[1] := 'data\models\1405_plane.obj';
+  Paths[2] := '..\data\models\1405_plane.obj';
+  Paths[3] := '..\..\data\models\1405_plane.obj';
+  Paths[4] := 'D:\SR3D\SpaceRangersHD_FPC\data\models\1405_plane.obj';
+  Paths[5] := 'D:\SR3D\SpaceRangersHD_FPC\data\models\1405 Plane.obj';
+  Paths[6] := 'D:\Games\Space Rangers HD A War Apart\data\models\1405_plane.obj';
+  Paths[7] := '1405_plane.obj';
+  Paths[8] := '1405 Plane.obj';
 
   Path := '';
-  for I := 0 to 3 do
+  DebugMsg := 'SR3D: searching for obj file...' + #13#10;
+  for I := 0 to 8 do
   begin
     if FileExists(Paths[I]) then
     begin
       Path := Paths[I];
+      DebugMsg := DebugMsg + 'FOUND: ' + Paths[I] + #13#10;
       Break;
+    end
+    else
+    begin
+      DebugMsg := DebugMsg + 'not found: ' + Paths[I] + #13#10;
     end;
   end;
 
-  if Path = '' then Exit;
+  if Path = '' then
+  begin
+    {$IFDEF MSWINDOWS}
+    MessageBox(0, PChar(DebugMsg), 'SR3D LoadModel', MB_OK or MB_ICONWARNING);
+    {$ENDIF}
+    Exit;
+  end;
 
   SetLength(gVerts, 0);
   SetLength(gTris, 0);
@@ -274,7 +297,7 @@ begin
     if maxB.Z - minB.Z > maxExt then maxExt := maxB.Z - minB.Z;
 
     if maxExt > 0 then
-      scl := 40.0 / maxExt
+      scl := 150.0 / maxExt
     else
       scl := 1.0;
 
@@ -287,6 +310,17 @@ begin
   end;
 
   gLoaded := True;
+
+  {$IFDEF MSWINDOWS}
+  MessageBox(0,
+    PChar(Format('SR3D model loaded OK!' + #13#10 +
+                 'Path: %s' + #13#10 +
+                 'Vertices: %d' + #13#10 +
+                 'Triangles: %d' + #13#10 +
+                 'MaxExt: %.1f' + #13#10 +
+                 'Scale: %.3f', [Path, vCount, tCount, maxExt, scl])),
+    'SR3D LoadModel', MB_OK or MB_ICONINFORMATION);
+  {$ENDIF}
 end;
 
 // ===== Draw =====
@@ -327,8 +361,11 @@ begin
   CX := (HitTestBounds.Right + HitTestBounds.Left) / 2;
   CY := (HitTestBounds.Bottom + HitTestBounds.Top) / 2;
 
+  // Build world matrix: World = RotZ(shipAngle) * RotX(-90°)
+  // RotX(-90°) puts model's +Z axis onto screen's +Y (so the nose,
+  // which is at +Z in the .obj, becomes "forward" in screen plane).
   MatRotZ(RotZMat, AngleRad);
-  MatRotX(RotXMat, -Pi / 4);
+  MatRotX(RotXMat, -Pi / 2);  // -90°: lay model flat (Z -> Y screen)
   WorldMat := RotZMat;
   MatMul(WorldMat, WorldMat, RotXMat);
 
