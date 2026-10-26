@@ -29,6 +29,13 @@ type
     procedure Draw(ClipRect: TRect); override;
   end;
 
+  // SR3D: заднее кольцо — отдельный класс с ×6 шириной
+  TRingBackImageGI = class(TRingImageGI)
+  public
+    procedure UpdateAutoGeometry; override;
+    procedure Draw(ClipRect: TRect); override;
+  end;
+
   PointerToTPlanetCollisionCircle = ^TPlanetCollisionCircle;
 
   PointerToTPlanetMapOrbitPoint = ^TPlanetMapOrbitPoint;
@@ -86,8 +93,8 @@ type
     SurfaceAnimationMask: Integer;
     SurfaceAnimationIndex: Integer;
     PlanetControl: TPlanetGI;
-    RingControl1: TImageGI;
-    RingControl2: TImageGI;
+    RingControl1: TRingImageGI;
+    RingControl2: TRingImageGI;
     MinimapControl: TAlphaImageGI;
     RotationTimer: PSpaceTimerSE;
     LegacySurfaceControl: TObjectGI;
@@ -177,11 +184,18 @@ begin
   IsRuins := FindTextOffsetW(AGraphKey, 'Ruins') = 0;
   inherited Create(AGraphKey, UnusedPosition);
 end;
+
 procedure TRingImageGI.UpdateAutoGeometry;
+var
+  ContentSize: TPoint;
 begin
   inherited UpdateAutoGeometry;
-  // SR3D: не меняем ClientSize — ×3 применяется только в Draw
-  // Это позволяет ванильному SetOrigin(SubtractPoints...) работать правильно
+  ContentSize := GetContentSize;
+  if (ContentSize.X > 0) and (ContentSize.Y > 0) then
+  begin
+    SetSize(Classes.Point(ContentSize.X * 3, ContentSize.Y * 3));
+    UpdateSubtreeHitBounds;
+  end;
 end;
 
 procedure TRingImageGI.Draw(ClipRect: TRect);
@@ -192,7 +206,6 @@ var
   Desc: TD3DSurfaceDesc;
   SR3D_Drawn: Boolean;
 begin
-  // SR3D: рисуем кольцо ×3 через DrawTextureSized
   SR3D_Drawn := False;
   if (GiImageControl <> nil) and HardwareRenderingEnabled then
   begin
@@ -204,9 +217,8 @@ begin
         Height := Image.Image.GetContentSize.Y;
         if (Width > 0) and (Height > 0) then
         begin
-                    DrawWidth := Width * 3;
+          DrawWidth := Width * 3;        { ← всегда ×3, без if }
           DrawHeight := Height * 3;
-                    // Центрируем по HitTestBounds (которая уже учитывает Origin с Offset)
           Left := (HitTestBounds.Right + HitTestBounds.Left - DrawWidth) div 2;
           Top := (HitTestBounds.Bottom + HitTestBounds.Top - DrawHeight) div 2;
           Texture := Image.GetOrCreateSurface(0);
@@ -217,8 +229,8 @@ begin
                 Texture,
                 Left,
                 Top,
-                Desc.Width * 3,
-                Desc.Height * 3,
+                DrawWidth,
+                DrawHeight,
                 GetAlpha,
                 RgbWhite,
                 @ClipRect,
@@ -226,7 +238,6 @@ begin
                 False
             );
             SR3D_Drawn := True;
-            // Скрываем дочерний GiImageControl только когда нарисовали сами
             GiImageControl.SetActive(False);
           end;
         end;
@@ -235,7 +246,77 @@ begin
       end;
     end;
   end;
-  // Если не нарисовали сами — рисуем стандартно (с дочерними)
+  if not SR3D_Drawn then
+    inherited Draw(ClipRect);
+end;
+
+procedure TRingBackImageGI.UpdateAutoGeometry;
+var
+  ContentSize: TPoint;
+begin
+  inherited UpdateAutoGeometry;
+  ContentSize := GetContentSize;
+  if (ContentSize.X > 0) and (ContentSize.Y > 0) then
+  begin
+    SetSize(Classes.Point(ContentSize.X * 6, ContentSize.Y * 3));
+    UpdateSubtreeHitBounds;
+    // SR3D: расширить HitTestBounds вправо для culling (чтобы не исчезать при отдалении)
+    HitTestBounds.Right := HitTestBounds.Right + 5000;
+    HitTestBounds.Left := HitTestBounds.Left - 5000;
+    HitTestBounds.Bottom := HitTestBounds.Bottom + 5000;
+    HitTestBounds.Top := HitTestBounds.Top - 5000;
+  end;
+end;
+
+procedure TRingBackImageGI.Draw(ClipRect: TRect);
+var
+  Image: TCGiEC;
+  Width, Height, Left, Top, DrawWidth, DrawHeight: Integer;
+  Texture: IDirect3DTexture9;
+  Desc: TD3DSurfaceDesc;
+  SR3D_Drawn: Boolean;
+begin
+  SR3D_Drawn := False;
+  if (GiImageControl <> nil) and HardwareRenderingEnabled then
+  begin
+    Image := AcquireCachedGi(GiImageControl.ImageCache);
+    if Image <> nil then
+    begin
+      try
+        DrawWidth := Width * 6;   { картинка ×6 (растянута в 2 раза) }
+          DrawHeight := Height * 3;
+        if (Width > 0) and (Height > 0) then
+        begin
+          { заднее — растягиваем ×6 (в 2 раза шире переднего) }
+          DrawWidth := Width * 6;
+          DrawHeight := Height * 3;
+          Left := (HitTestBounds.Right + HitTestBounds.Left - DrawWidth) div 2;
+          Top := (HitTestBounds.Bottom + HitTestBounds.Top - DrawHeight) div 2;
+          Texture := Image.GetOrCreateSurface(0);
+          if Texture <> nil then
+          begin
+            Texture.GetLevelDesc(0, Desc);
+            DrawTextureSized(
+                Texture,
+                Left,
+                Top,
+                DrawWidth,
+                DrawHeight,
+                GetAlpha,
+                RgbWhite,
+                @GameScreenRect,
+                False,
+                False
+            );
+            SR3D_Drawn := True;
+            GiImageControl.SetActive(False);
+          end;
+        end;
+      finally
+        GiImageControl.ImageCache.Release;
+      end;
+    end;
+  end;
   if not SR3D_Drawn then
     inherited Draw(ClipRect);
 end;
@@ -571,18 +652,22 @@ begin
       Path := Path + '4'
     else
       RaiseWideMessage('TPlanetSE.CreateRing');
-            RingControl1 := TRingImageGI.Create(Space.MapPanel);
+        RingControl1 := TRingImageGI.Create(Space.MapPanel);
     RingControl1.SetPositionModeW(True);
     RingControl1.SetDepth(PlanetControl.Depth - 0.01);
     RingControl1.SetImagePath(Path + '_1');
-    RingControl1.SetSize(RingControl1.GetContentSize);
+    RingControl1.SetSize(Classes.Point(RingControl1.GetContentSize.X * 3, RingControl1.GetContentSize.Y * 3));
+    RingControl1.AutoUpdateFlags := RingControl1.AutoUpdateFlags and not $02;
     RingControl1.SetPosition(PlanetControl.LocalPosition);
-    RingControl2 := TRingImageGI.Create(Space.MapPanel);
+    RingControl2 := TRingBackImageGI.Create(Space.MapPanel);
     RingControl2.SetPositionModeW(True);
-    RingControl2.SetDepth(PlanetControl.Depth + 0.01);
+    RingControl2.SetDepth(PlanetControl.Depth - 0.01);
     RingControl2.SetImagePath(Path + '_2');
-    RingControl2.SetSize(RingControl2.GetContentSize);
+    RingControl2.SetSize(Classes.Point(RingControl2.GetContentSize.X * 3, RingControl2.GetContentSize.Y * 3));
+    RingControl2.AutoUpdateFlags := RingControl2.AutoUpdateFlags and not $02;
     RingControl2.SetPosition(PlanetControl.LocalPosition);
+    RingControl1.SetOrigin(Classes.Point(RingControl1.ClientSize.X div 2, RingControl1.ClientSize.Y div 2));
+    RingControl2.SetOrigin(Classes.Point(RingControl2.ClientSize.X div 2, RingControl2.ClientSize.Y div 2));
     FirstBounds.TopLeft := RingControl1.GetContentOrigin;
     FirstBounds.BottomRight := AddPoints(FirstBounds.TopLeft, RingControl1.ClientSize);
     SecondBounds.TopLeft := RingControl2.GetContentOrigin;
@@ -606,7 +691,6 @@ begin
     RingControl2.SetOrigin(SubtractPoints(SubtractPoints(Center, SecondBounds.TopLeft), Offset));
   end;
 end;
-
 
 procedure TPlanetSE.RebuildSurfaceAnimation;
 var
