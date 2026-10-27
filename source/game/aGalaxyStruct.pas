@@ -121,7 +121,8 @@ type
       htTranclucator = 7,
       htStation = 8,
       htSpecial = 9,
-      htFlagship = 10
+      htFlagship = 10,
+      htSRTest = 11  // SR3D: custom test hull (uses People Ranger stats)
   );
 
   {$Z1}

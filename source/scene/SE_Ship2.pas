@@ -380,7 +380,13 @@ begin
     Stage := 1;
     inherited AttachToSpace(ASpace);
     Stage := 2;
-    Image := TShip3DGI.Create(nil);
+    // Only ships whose GraphKey is in the SR3D_3D_HULLS list use the 3D
+    // renderer. All others keep the original 2D sprite (TRotateImage5GI).
+    // See SR3D_ShouldUse3D in SE_Ship3D for configuration.
+    if SR3D_ShouldUse3D(GraphKey) then
+      Image := TShip3DGI.Create(nil)
+    else
+      Image := TRotateImage5GI.Create(nil);
     Stage := 3;
     if Space.MapPanel <> nil then
       Space.MapPanel.AttachOwnedChild(Image);
@@ -415,6 +421,19 @@ begin
     else
       Image.SetImage(ReducedImagePath, Size, RoundPointF(GetOrbitCenter));
     Image.SetFrameIndex(CurrentAnimation.Frames[CurrentFrameIndex]);
+
+    // SR3D: for 3D-rendered ships, expand the control's logical size to
+    // cover the whole screen — same trick Tails use (SetSize(1000000,...))
+    // and planet rings use (size * 3 / * 6). Without this, DrawControl's
+    // culling discards the ship when zoomed out, because the default
+    // ClientSize (64x64) is too small in logical coords.
+    if Image is TShip3DGI then
+    begin
+      Image.SetSize(Classes.Point(1000000, 1000000));
+      Image.SetOrigin(Classes.Point(500000, 500000));
+      Image.UpdateSubtreeHitBounds;
+    end;
+
     Stage := 9;
     if TailMode > 0 then
       for Index := Low(TailOrigins) to High(TailOrigins) do

@@ -2237,6 +2237,7 @@ begin
       htPirate: ShipTypeName := LocalizedText('Items.Hull.ShipType.Pirate');
       htWarrior: ShipTypeName := LocalizedText('Items.Hull.ShipType.Warrior');
       htKling: ShipTypeName := LocalizedText('Items.Hull.ShipType.Kling');
+      htSRTest: ShipTypeName := LocalizedText('Items.Hull.ShipType.Ranger');
     else
       ShipTypeName := '';
     end;
@@ -2340,7 +2341,7 @@ var
 begin
   if ConfigBlockName <> '' then
     Result := 'Bm.Items.' + GiResourceSuffix + ConfigBlockName
-  else if HullType = htRanger then
+    else if (HullType = htRanger) or (HullType = htSRTest) then
     Result := 'Bm.Items.' + GiResourceSuffix + 'Hull_' + OwnerInfo[OwnerId].InternalName + '_R_'
   else if HullType = htWarrior then
     Result := 'Bm.Items.' + GiResourceSuffix + 'Hull_' + OwnerInfo[OwnerId].InternalName + '_W_'
@@ -2433,6 +2434,7 @@ begin
         Result := StationHullSlots[TShip(Ship).TypeId, Kind];
     htSpecial: Result := SpecialHullSlots[Kind];
     htFlagship: Result := FlagshipHullSlots[Kind];
+    htSRTest: Result := RangerHullSlots[Owner, Kind];
   else
     RaiseWideMessage('SlotCount error');
   end;

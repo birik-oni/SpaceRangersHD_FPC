@@ -5318,6 +5318,10 @@ begin
       Continue;
     Break;
   end;
+  // SR3D: FOR TESTING — force htSRTest hull type with 100% probability.
+  // This makes our custom test ship always available in equipment shops.
+  // TODO: lower this chance (or remove) once testing is complete.
+  HullType := htSRTest;
   Flagship := (Target is TWarrior) and ((Target as TWarrior).WarriorType = wtFlagship);
   if Flagship then
     HullType := htFlagship;

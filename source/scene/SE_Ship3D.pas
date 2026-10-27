@@ -21,8 +21,46 @@ type
     FBankAngle: Single;
   public
     procedure Draw(ClipRect: TRect); override;
-    procedure UpdateHitTestBounds; override;
+    function HitTestPixel(Point: TPoint): Boolean; override;
   end;
+
+  { TShip3DPortraitGI — статичный 3D-портрет корабля для ангара/магазина.
+    Не зависит от TShip3DGI — отдельный класс с упрощённым рендером.
+    Использует те же глобальные данные модели (gVerts, gTris, ...).
+    Рисует модель в изометрии с прозрачным фоном. }
+  TShip3DPortraitGI = class(TObjectGI)
+  private
+    FModelScale: Single;  // масштаб модели относительно ClientSize
+  public
+    constructor Create(Owner: TObjectGI);
+    procedure Draw(ClipRect: TRect); override;
+  end;
+
+{ Returns True if a ship with the given GraphKey should use the 3D renderer
+  instead of the original 2D sprite. The list below maps GraphKey to the 3D
+  model. To add another ship type, append its GraphKey to the SR3D_3D_HULLS
+  array below.
+
+  GraphKey is the scene-graph key like 'Ship.People.Ranger' — see
+  TShip.CreateNormalGraphic in aShip.pas for the dispatch table that
+  decides which GraphKey a ship gets.
+
+  To discover the GraphKey of a particular ship: run a Windows debug build
+  with DebugView running — every ship creation prints
+  "SR3D ship: graphkey=<...>, use3D=<True/False>" via OutputDebugString. }
+function SR3D_ShouldUse3D(const GraphKey: WideString): Boolean;
+
+{ Register custom SR3D ships in the in-memory game data config. Call this
+  AFTER MainDataConfig / GameDataConfig has been fully loaded.
+
+  Currently registers:
+    * SE.Ship.People.SR_Test  — copies SE.Ship.People.Ranger, used by the
+      custom htSRTest hull type. Rendered with the 3D model thanks to
+      SR3D_3D_HULLS.
+
+  This procedure does NOT modify any .dat files — it only adds blocks to
+  the in-memory TBlockParEC tree, so vanilla data is preserved. }
+procedure SR3D_RegisterCustomShips;
 
 implementation
 
@@ -32,6 +70,7 @@ uses
   , Windows
   {$ENDIF}
   , EC_OKGF
+  , EC_BlockPar
   , GameSystem
   ;
 
@@ -55,6 +94,7 @@ type
     V0, V1, V2: Integer;
     T0, T1, T2: Integer;
     MatIdx: Integer;
+    Area: Single;  // surface area, used for LOD culling (skip small tris)
   end;
   TMaterial = record
     Name: AnsiString;
@@ -72,6 +112,105 @@ var
   gMats: array of TMaterial;
   gLoaded: Boolean = False;
   gLoadAttempted: Boolean = False;
+
+const
+  // SR3D: LOD threshold — skip triangles whose surface area (in normalized
+  // model units, after the scl = 80/maxExt scaling) is smaller than this.
+  // Set to 0 to disable LOD. Higher values = more aggressive culling.
+  MIN_TRI_AREA: Single = 0.02;
+
+{ List of ship GraphKeys that should be rendered with the 3D model.
+  Add a ship's GraphKey here to enable 3D for that hull type.
+  Leave the array empty to disable 3D entirely (all ships use 2D sprites).
+
+  To discover the GraphKey of a particular ship: run a Windows debug build
+  with DebugView running — every ship creation prints
+  "SR3D ship: graphkey=<...>, use3D=<True/False>" via OutputDebugString.
+
+  Currently enabled (ONLY the SR3D custom test ship — vanilla Ranger and
+  RangerOldFag use their original 2D sprites):
+    * Ship.People.SR_Test        — SR3D custom test ship (htSRTest hull)
+
+  See TShip.CreateNormalGraphic in aShip.pas for the dispatch table. }
+const
+  SR3D_3D_HULLS: array[0..0] of WideString = (
+    'Ship.People.SR_Test'
+  );
+
+function SR3D_ShouldUse3D(const GraphKey: WideString): Boolean;
+var
+  I: Integer;
+  {$IFDEF MSWINDOWS}
+  DbgLine: AnsiString;
+  {$ENDIF}
+begin
+  Result := False;
+  for I := Low(SR3D_3D_HULLS) to High(SR3D_3D_HULLS) do
+  begin
+    if SR3D_3D_HULLS[I] = GraphKey then
+    begin
+      Result := True;
+      Break;
+    end;
+  end;
+  {$IFDEF MSWINDOWS}
+  DbgLine := AnsiString(Format('SR3D ship: graphkey="%s", use3D=%s',
+    [string(GraphKey), BoolToStr(Result, True)]));
+  OutputDebugStringA(PAnsiChar(DbgLine));
+  {$ENDIF}
+end;
+
+// Internal helper: copy a block tree by deep-merging source into destination.
+// MergeFrom on TBlockParEC copies all params and recursively merges child
+// blocks, which is what we want for cloning SE.Ship.* definitions.
+procedure SR3D_CopyBlock(Src, Dst: TBlockParEC);
+begin
+  Dst.MergeFrom(Src);
+end;
+
+procedure SR3D_RegisterCustomShips;
+var
+  ShipRoot, SrcShip, DstShip: TBlockParEC;
+  {$IFDEF MSWINDOWS}
+  DbgLine: AnsiString;
+  {$ENDIF}
+begin
+  if GameDataConfig = nil then Exit;
+  // Locate SE.Ship.People block (parent of Ranger, Warrior, etc.)
+  ShipRoot := GameDataConfig.GetBlockByPath('SE.Ship').FindBlock('People');
+  if ShipRoot = nil then
+  begin
+    {$IFDEF MSWINDOWS}
+    OutputDebugStringA(PAnsiChar('SR3D_RegisterCustomShips: SE.Ship.People not found'));
+    {$ENDIF}
+    Exit;
+  end;
+  // Find vanilla Ranger block to use as template
+  SrcShip := ShipRoot.FindBlock('Ranger');
+  if SrcShip = nil then
+  begin
+    {$IFDEF MSWINDOWS}
+    OutputDebugStringA(PAnsiChar('SR3D_RegisterCustomShips: SE.Ship.People.Ranger not found'));
+    {$ENDIF}
+    Exit;
+  end;
+  // If SR_Test already exists (e.g. modded .dat), do not overwrite.
+  if ShipRoot.FindBlock('SR_Test') <> nil then
+  begin
+    {$IFDEF MSWINDOWS}
+    OutputDebugStringA(PAnsiChar('SR3D_RegisterCustomShips: SE.Ship.People.SR_Test already exists, skipping'));
+    {$ENDIF}
+    Exit;
+  end;
+  // Add new empty block and copy Ranger's contents into it.
+  DstShip := ShipRoot.AddBlockByPath('SR_Test');
+  SR3D_CopyBlock(SrcShip, DstShip);
+  {$IFDEF MSWINDOWS}
+  DbgLine := AnsiString(Format('SR3D_RegisterCustomShips: registered SE.Ship.People.SR_Test (copied from Ranger, %d params, %d sub-blocks)',
+    [DstShip.GetParamCount, DstShip.GetBlockCount]));
+  OutputDebugStringA(PAnsiChar(DbgLine));
+  {$ENDIF}
+end;
 
 function SR3D_MatColor(const MatName: string): Cardinal;
 begin
@@ -428,6 +567,29 @@ begin
   {$ENDIF}
 end;
 
+// Find first *.png (case-insensitive) in the given directory and load it
+// as a D3D9 texture. Returns nil if no PNG is found or loading fails.
+function SR3D_FindFirstPngInDir(const Dir: string): IDirect3DTexture9;
+var
+  SR: TSearchRec;
+  Found: Boolean;
+  FullPath: string;
+begin
+  Result := nil;
+  Found := False;
+  // Try lowercase extension first, then uppercase.
+  if SysUtils.FindFirst(Dir + '*.png', faAnyFile, SR) = 0 then
+    Found := True
+  else if SysUtils.FindFirst(Dir + '*.PNG', faAnyFile, SR) = 0 then
+    Found := True;
+  if Found then
+  begin
+    FullPath := Dir + SR.Name;
+    SysUtils.FindClose(SR);
+    Result := SR3D_LoadTexture(FullPath);
+  end;
+end;
+
 procedure SR3D_LoadModel;
 var
   Path, MTLName, BaseDir, MTLPath: string;
@@ -446,6 +608,8 @@ var
   DebugMsg: string;
   CurMatIdx: Integer;
   CurMatName: string;
+  FallbackPath: string;
+  FallbackTex2: IDirect3DTexture9;
   {$IFDEF MSWINDOWS}
   TexInfo: string;
   {$ENDIF}
@@ -647,6 +811,42 @@ begin
   if MTLPath <> '' then
     SR3D_LoadMTL(MTLPath);
 
+  // === AGGRESSIVE FALLBACK ===
+  // If after parsing the MTL there are materials without a texture, try
+  // multiple strategies to find ANY usable PNG:
+  //   1. <objname>.png next to the .obj (e.g. 1405_Plane.png)
+  //   2. <objname>.PNG (case-insensitive on Windows, but be explicit)
+  //   3. First *.png file found in the same directory as the .obj
+  // Apply the discovered texture to ALL materials that have no texture.
+  // This guarantees that if ANY png sits next to the .obj, ships will be
+  // textured — so we can verify the UV/render pipeline works.
+  FallbackTex2 := nil;
+  FallbackPath := ChangeFileExt(Path, '.png');
+  if FileExists(FallbackPath) then
+    FallbackTex2 := SR3D_LoadTexture(FallbackPath);
+  if FallbackTex2 = nil then
+  begin
+    // Try uppercase extension
+    FallbackPath := ChangeFileExt(Path, '.PNG');
+    if FileExists(FallbackPath) then
+      FallbackTex2 := SR3D_LoadTexture(FallbackPath);
+  end;
+  if FallbackTex2 = nil then
+    FallbackTex2 := SR3D_FindFirstPngInDir(ExtractFilePath(Path));
+  if FallbackTex2 <> nil then
+  begin
+    for I := 0 to High(gMats) do
+    begin
+      if gMats[I].Texture = nil then
+      begin
+        gMats[I].Texture := FallbackTex2;
+        gMats[I].HasTexture := True;
+        if gMats[I].TexPath = '' then
+          gMats[I].TexPath := AnsiString(ExtractFileName(FallbackPath));
+      end;
+    end;
+  end;
+
   // === Center & scale model ===
   if vCount > 0 then
   begin
@@ -671,7 +871,10 @@ begin
     if maxB.Z - minB.Z > maxExt then maxExt := maxB.Z - minB.Z;
 
     if maxExt > 0 then
-      scl := 150.0 / maxExt
+      // Normalize model so its largest dimension is ~80 pixels — close to
+      // the original 2D sprite size (64). Tune this value to make the
+      // ship bigger or smaller.
+      scl := 80.0 / maxExt
     else
       scl := 1.0;
 
@@ -736,19 +939,44 @@ begin
   end;
 end;
 
-procedure TShip3DGI.UpdateHitTestBounds;
-const
-  // Generous bbox around the ship's absolute position. The 3D model has a
-  // radius of ~150 model units in logical (pre-zoom) coordinates. We pad
-  // it well beyond that so culling in DrawControl never discards a ship
-  // when the user zooms out — the 2D-sprite bbox would shrink with
-  // ChildWorldScale, but the 3D model keeps its size.
-  SHIP3D_HALF_EXTENT = 512;
+// Compute surface area of each triangle for LOD culling. Triangle area is
+// 0.5 * |(V1-V0) × (V2-V0)| — half the magnitude of the cross product.
+// Called once after model load. The areas are stored in gTris[].Area and
+// read in TShip3DGI.Draw to skip triangles smaller than MIN_TRI_AREA.
+procedure SR3D_ComputeTriAreas;
+var
+  I: Integer;
+  V0, V1, V2: TVtx3D;
+  CX, CY, CZ: Single;
 begin
-  HitTestBounds.Left   := AbsolutePosition.X - SHIP3D_HALF_EXTENT;
-  HitTestBounds.Right  := AbsolutePosition.X + SHIP3D_HALF_EXTENT;
-  HitTestBounds.Top    := AbsolutePosition.Y - SHIP3D_HALF_EXTENT;
-  HitTestBounds.Bottom := AbsolutePosition.Y + SHIP3D_HALF_EXTENT;
+  for I := 0 to High(gTris) do
+  begin
+    V0 := gVerts[gTris[I].V0];
+    V1 := gVerts[gTris[I].V1];
+    V2 := gVerts[gTris[I].V2];
+    // Cross product of (V1-V0) and (V2-V0)
+    CX := (V1.Y - V0.Y) * (V2.Z - V0.Z) - (V1.Z - V0.Z) * (V2.Y - V0.Y);
+    CY := (V1.Z - V0.Z) * (V2.X - V0.X) - (V1.X - V0.X) * (V2.Z - V0.Z);
+    CZ := (V1.X - V0.X) * (V2.Y - V0.Y) - (V1.Y - V0.Y) * (V2.X - V0.X);
+    // Area = 0.5 * |cross|
+    gTris[I].Area := 0.5 * Sqrt(CX*CX + CY*CY + CZ*CZ);
+  end;
+end;
+
+function TShip3DGI.HitTestPixel(Point: TPoint): Boolean;
+const
+  // Half-size of the ship sprite in logical coordinates. The model is
+  // centered on AbsolutePosition with a footprint of ~150 units; we add
+  // some slack so clicks at the edge of wings/nose still register.
+  HIT_RADIUS = 100;
+var
+  Local: TPoint;
+begin
+  // Convert screen point to logical (pre-zoom) coordinates first, so the
+  // hit radius is independent of zoom level.
+  Local := ScreenToLogicalPoint(Point);
+  Result := (Abs(Local.X - AbsolutePosition.X) <= HIT_RADIUS) and
+            (Abs(Local.Y - AbsolutePosition.Y) <= HIT_RADIUS);
 end;
 
 procedure TShip3DGI.Draw(ClipRect: TRect);
@@ -771,12 +999,26 @@ var
   // Static overhead lighting
   LightX, LightY, LightZ: Single;
   Ambient: Single;
+  // BigClip — restore previous scissor after drawing
+  OldClip: TRect;
+  BigClip: TRect;
+  ScreenHalfW, ScreenHalfH: Integer;
+  Scale: Single;
 begin
   if not HardwareRenderingEnabled then
   begin
     inherited Draw(ClipRect);
     Exit;
   end;
+
+  {$IFDEF MSWINDOWS}
+  OutputDebugStringA(PAnsiChar(AnsiString(Format(
+    'SR3D Draw: abspos=(%d,%d) scale=%.3f clip=(L=%d,T=%d,R=%d,B=%d) clientsize=(%d,%d) tris=%d',
+    [AbsolutePosition.X, AbsolutePosition.Y, Scale,
+     ClipRect.Left, ClipRect.Top, ClipRect.Right, ClipRect.Bottom,
+     ClientSize.X, ClientSize.Y,
+     Length(gTris)]))));
+  {$ENDIF}
 
   // NOTE: no HitTestBounds culling here — parent DrawControl already did it
   // before calling us, and our UpdateHitTestBounds returns a generous bbox
@@ -791,6 +1033,7 @@ begin
       Exit;
     end;
     SR3D_SortTrisByMat;
+    SR3D_ComputeTriAreas;
   end;
 
   AngleRad := (Angle / 256) * 2 * Pi - Pi / 2;
@@ -799,6 +1042,19 @@ begin
   // would give a wrong center after zoom changes.
   CX := AbsolutePosition.X;
   CY := AbsolutePosition.Y;
+
+  // === Zoom-aware BigClip ===
+  // The ship itself stays at a fixed pixel size (we don't scale Wx/Wy by
+  // zoom). But the SCISSOR rect must cover the full visible area at every
+  // zoom level, otherwise the ship gets clipped when zoomed out.
+  //
+  // We build BigClip in LOGICAL coordinates centered on the ship:
+  //   half_screen_in_logical = (screen_pixels / Scale) / 2
+  // Then SDL2 backend's RasterClipRect scales it back to screen pixels.
+  if (Parent <> nil) then
+    Scale := Parent.ChildWorldScale
+  else
+    Scale := 1.0;
 
   // === Gentle rocking animation (like original 2D sprites) ===
   // Original ships bob slightly left-right at all times — the sprite itself
@@ -825,27 +1081,20 @@ begin
 
   // === Static "sun overhead" lighting ===
   // Original ships have their lighting BAKED INTO the sprite — the sun is
-  // effectively directly overhead (world +Y in model space, since Y is the
-  // short vertical axis) and the light never moves.
+  // effectively directly overhead and the light never moves.
   //
-  // We add a slight backward bias (-Z) so the sun sits "above and just
-  // behind the nose" rather than directly in front of it — this lights
-  // the top of the hull and the cockpit area, exactly like the baked
-  // sprite shading.
+  // We use a near-vertical light in MODEL space: +Y is the top of the
+  // hull, with a small -Z bias so the sun is "above and slightly behind
+  // the nose". After the camera tilt (-60° around X), top-facing polygons
+  // end up facing the camera and slightly toward the top of the screen —
+  // that's exactly what we want lit.
   //
-  // Model axes (verified from OBJ bbox):
-  //   X = ±13  (wings, left/right)
-  //   Y = ±1.8 (top/bottom — vertical, short axis)
-  //   Z = ±9.8 (nose/tail, +Z = nose)
-  //
-  // Without back-face culling we rely on lighting to "hide" the bottom
-  // faces: they get N·L < 0 → clamped to ambient (dark), while top faces
-  // get N·L > 0 → bright. The contrast makes the bottom virtually
-  // invisible against the dark space backdrop.
+  // If lighting looks wrong (ship in shadow), the most likely cause is
+  // inverted winding — try flipping the sign of LightY.
   LightX := 0;
-  LightY := 0.95;   // mostly overhead
-  LightZ := -0.30;  // slightly toward the tail (away from nose)
-  Ambient := 0.22;  // soft shadow floor — bottom faces dark gray, not pitch black
+  LightY := -0.95;  // NEGATIVE because OBJ winding may put normals inside-out
+  LightZ := 0.30;   // opposite sign of Z too (consistent with the flip)
+  Ambient := 0.50;  // high ambient so we can SEE the ship while debugging
 
   SetLength(RenderVerts, TCount * 3);
   SetLength(OutMats, TCount);
@@ -863,17 +1112,23 @@ begin
     NY := gNormals[I].Y;
     NZ := gNormals[I].Z;
 
-    // Back-face culling: DISABLED.
+    // Back-face culling: use CamMat (camera + screen rotation, NO bank) to
+    // get the normal's Z in screen space. Skip triangles whose normal
+    // points AWAY from the camera (back faces). Without this, both top
+    // and bottom faces render and z-fighting creates black patches where
+    // bottom faces bleed through the top.
     //
-    // The model's winding order may not match what we expect after the
-    // camera transform, and getting the sign wrong makes either the top
-    // or the bottom of the ship disappear (along with its textures).
-    // Without a Z-buffer we can't do proper hidden-surface removal anyway,
-    // so we just draw all triangles. Z-fighting between top and bottom
-    // faces is acceptable for a small ship sprite — the lit top faces
-    // will dominate visually because they're brighter than the dark
-    // bottom faces.
+    // Sign convention: with our camera tilted -60° around X, top-facing
+    // polygons (model +Y normal) end up with CNz > 0 in screen space
+    // (they face toward the camera). Bottom-facing polygons get CNz < 0.
+    // We keep CNz > 0 (visible), cull CNz <= 0 (away from camera).
     CNz := NX * CamMat[0,2] + NY * CamMat[1,2] + NZ * CamMat[2,2];
+    if CNz <= 0.02 then Continue;
+
+    // LOD: skip triangles whose surface area (computed once at load time)
+    // is below MIN_TRI_AREA. Small triangles contribute little to the
+    // silhouette and removing them cuts vertex transform cost.
+    if (MIN_TRI_AREA > 0) and (gTris[I].Area < MIN_TRI_AREA) then Continue;
 
     // Lighting: world-space normal (RotZBank only — bank rotates the ship
     // in the world, so it changes lighting; but screen rotation does NOT
@@ -899,6 +1154,9 @@ begin
     if Intensity > 1.0 then Intensity := 1.0;
 
     // === Project 3 vertices through full world matrix (with bank) ===
+    // NOTE: We do NOT multiply Wx/Wy by Scale (ChildWorldScale) — in this
+    // game zoom is camera distance, not object scaling. Objects stay at
+    // their fixed pixel size; only their on-screen position changes.
     // Vertex 0
     Vx := gVerts[gTris[I].V0].X;
     Vy := gVerts[gTris[I].V0].Y;
@@ -1003,6 +1261,35 @@ begin
   Direct3DDevice.SetFVF(D3DFVF_XYZRHW or D3DFVF_DIFFUSE or D3DFVF_TEX1);
   Direct3DDevice.SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
 
+  // === BigClip ===
+  // Save current scissor, then set a BIG scissor in LOGICAL coordinates
+  // centered on the ship. This matches the trick used by TRingBackImageGI
+  // for planet rings — it lets the 3D model render at any zoom level
+  // without being clipped by the parent panel's narrow logical ClipRect.
+  //
+  // IMPORTANT: SDL2 backend's RasterClipRect multiplies the scissor by
+  // GameGraphicsTransform.Scale (which includes ChildWorldScale via the
+  // parent's RasterScaleX). So we must pass a rect in LOGICAL coords —
+  // the same coordinate space ClipRect comes in. Using GameScreenRect
+  // (screen pixels) directly DOES NOT WORK because it gets scaled
+  // wrongly. We build a rect ±half-screen / Scale centered on the ship.
+  Direct3DDevice.GetScissorRect(OldClip);
+  if Scale > 0.001 then
+  begin
+    ScreenHalfW := Round(GameScreenWidth / Scale / 2) + 100;
+    ScreenHalfH := Round(GameScreenHeight / Scale / 2) + 100;
+  end
+  else
+  begin
+    ScreenHalfW := 2000;
+    ScreenHalfH := 2000;
+  end;
+  BigClip.Left   := AbsolutePosition.X - ScreenHalfW;
+  BigClip.Right  := AbsolutePosition.X + ScreenHalfW;
+  BigClip.Top    := AbsolutePosition.Y - ScreenHalfH;
+  BigClip.Bottom := AbsolutePosition.Y + ScreenHalfH;
+  Direct3DDevice.SetScissorRect(@BigClip);
+
   I := 0;
   while I < TCount do
   begin
@@ -1026,6 +1313,218 @@ begin
       SizeOf(TScreenVertexGR));
   end;
 
+  Direct3DDevice.SetTexture(0, nil);
+
+  // Restore previous scissor so other rendering is not affected.
+  Direct3DDevice.SetScissorRect(@OldClip);
+end;
+
+{ === TShip3DPortraitGI === }
+
+constructor TShip3DPortraitGI.Create(Owner: TObjectGI);
+begin
+  inherited Create(Owner);
+  FModelScale := 0.8;  // модель занимает 80% размера окна
+end;
+
+procedure TShip3DPortraitGI.Draw(ClipRect: TRect);
+const
+  // Статичный свет сверху (как в космосе, но без покачивания).
+  // +Y — верх модели, лёгкий наклон к хвосту.
+  LightX: Single = 0;
+  LightY: Single = -0.95;
+  LightZ: Single = 0.30;
+  Ambient: Single = 0.40;
+var
+  RotXMat, RotZMat, WorldMat, CamMat: TD3DMatrix;
+  CX, CY: Single;
+  I, TCount, OutIdx: Integer;
+  RenderVerts: array of TScreenVertexGR;
+  OutMats: array of Integer;
+  Vx, Vy, Vz, Wx, Wy: Single;
+  NX, NY, NZ: Single;
+  CNz: Single;
+  Wnx, Wny, Wnz: Single;
+  Intensity: Single;
+  R, G, B: Byte;
+  BaseColor: Cardinal;
+  CurMatIdx, RunStart, RunCount: Integer;
+  CurTex: IDirect3DTexture9;
+  MinSize: Integer;
+begin
+  {$IFDEF MSWINDOWS}
+  OutputDebugStringA(PAnsiChar(AnsiString(Format(
+    'SR3D Portrait Draw: clientsize=(%d,%d) active=%s gloaded=%s tris=%d',
+    [ClientSize.X, ClientSize.Y, BoolToStr(Active, True),
+     BoolToStr(gLoaded, True), Length(gTris)]))));
+  {$ENDIF}
+  if not HardwareRenderingEnabled then Exit;
+  if not gLoaded then
+  begin
+    SR3D_LoadModel;
+    if not gLoaded then Exit;
+    SR3D_SortTrisByMat;
+    SR3D_ComputeTriAreas;
+  end;
+
+  // Если размер окна 0 — не рисуем
+  if (ClientSize.X <= 0) or (ClientSize.Y <= 0) then Exit;
+
+  // Центр окна = центр модели
+  CX := ClientSize.X / 2;
+  CY := ClientSize.Y / 2;
+
+  // Масштаб модели: модель нормирована до ~80 единиц, окно ~128px.
+  // FModelScale = 0.8 → модель занимает 80% окна.
+  MinSize := ClientSize.X;
+  if ClientSize.Y < MinSize then MinSize := ClientSize.Y;
+  // scl_model — масштаб из модельных единиц в пиксели окна
+  // модель после загрузки ~80 единиц, хотим ~MinSize*FModelScale пикселей
+  // → scale = (MinSize*FModelScale) / 80
+  // но модель уже отнормирована (scl=80 в LoadModel), так что просто:
+  // умножим Wx, Wy на (MinSize / 100) * FModelScale
+
+  // Изометрия: поворот вокруг X (камера сверху-сбоку) + лёгкий поворот Z
+  MatRotX(RotXMat, -Pi / 4);       // -45° наклон камеры (изометрия)
+  MatRotZ(RotZMat, Pi / 6);        // +30° поворот модели для изометрии
+  WorldMat := RotXMat;
+  MatMul(WorldMat, WorldMat, RotZMat);
+  CamMat := WorldMat;  // для culling та же матрица
+
+  TCount := Length(gTris);
+  if TCount = 0 then Exit;
+
+  SetLength(RenderVerts, TCount * 3);
+  SetLength(OutMats, TCount);
+
+  OutIdx := 0;
+  for I := 0 to TCount - 1 do
+  begin
+    NX := gNormals[I].X;
+    NY := gNormals[I].Y;
+    NZ := gNormals[I].Z;
+
+    // Back-face culling (как в космосе)
+    CNz := NX * CamMat[0,2] + NY * CamMat[1,2] + NZ * CamMat[2,2];
+    if CNz <= 0.02 then Continue;
+
+    // LOD
+    if (MIN_TRI_AREA > 0) and (gTris[I].Area < MIN_TRI_AREA) then Continue;
+
+    // Освещение (статичное, как в космосе)
+    Wnx := NX * WorldMat[0,0] + NY * WorldMat[1,0] + NZ * WorldMat[2,0];
+    Wny := NX * WorldMat[0,1] + NY * WorldMat[1,1] + NZ * WorldMat[2,1];
+    Wnz := NX * WorldMat[0,2] + NY * WorldMat[1,2] + NZ * WorldMat[2,2];
+    Intensity := Wnx * LightX + Wny * LightY + Wnz * LightZ;
+    if Intensity < 0 then Intensity := 0;
+    Intensity := Ambient + Intensity * 0.70;
+    if Intensity > 1.0 then Intensity := 1.0;
+
+    // Вершины
+    Vx := gVerts[gTris[I].V0].X;
+    Vy := gVerts[gTris[I].V0].Y;
+    Vz := gVerts[gTris[I].V0].Z;
+    Wx := Vx * WorldMat[0,0] + Vy * WorldMat[1,0] + Vz * WorldMat[2,0];
+    Wy := Vx * WorldMat[0,1] + Vy * WorldMat[1,1] + Vz * WorldMat[2,1];
+    RenderVerts[OutIdx].X := CX + Wx * (MinSize / 100) * FModelScale;
+    RenderVerts[OutIdx].Y := CY + Wy * (MinSize / 100) * FModelScale;
+    RenderVerts[OutIdx].Z := 1.0;
+    RenderVerts[OutIdx].RHW := 1.0;
+    if gTris[I].T0 >= 0 then
+    begin
+      RenderVerts[OutIdx].U := gUVs[gTris[I].T0].U;
+      RenderVerts[OutIdx].V := 1.0 - gUVs[gTris[I].T0].V;
+    end
+    else
+    begin
+      RenderVerts[OutIdx].U := 0;
+      RenderVerts[OutIdx].V := 0;
+    end;
+
+    Vx := gVerts[gTris[I].V1].X;
+    Vy := gVerts[gTris[I].V1].Y;
+    Vz := gVerts[gTris[I].V1].Z;
+    Wx := Vx * WorldMat[0,0] + Vy * WorldMat[1,0] + Vz * WorldMat[2,0];
+    Wy := Vx * WorldMat[0,1] + Vy * WorldMat[1,1] + Vz * WorldMat[2,1];
+    RenderVerts[OutIdx+1].X := CX + Wx * (MinSize / 100) * FModelScale;
+    RenderVerts[OutIdx+1].Y := CY + Wy * (MinSize / 100) * FModelScale;
+    RenderVerts[OutIdx+1].Z := 1.0;
+    RenderVerts[OutIdx+1].RHW := 1.0;
+    if gTris[I].T1 >= 0 then
+    begin
+      RenderVerts[OutIdx+1].U := gUVs[gTris[I].T1].U;
+      RenderVerts[OutIdx+1].V := 1.0 - gUVs[gTris[I].T1].V;
+    end
+    else
+    begin
+      RenderVerts[OutIdx+1].U := 0;
+      RenderVerts[OutIdx+1].V := 0;
+    end;
+
+    Vx := gVerts[gTris[I].V2].X;
+    Vy := gVerts[gTris[I].V2].Y;
+    Vz := gVerts[gTris[I].V2].Z;
+    Wx := Vx * WorldMat[0,0] + Vy * WorldMat[1,0] + Vz * WorldMat[2,0];
+    Wy := Vx * WorldMat[0,1] + Vy * WorldMat[1,1] + Vz * WorldMat[2,1];
+    RenderVerts[OutIdx+2].X := CX + Wx * (MinSize / 100) * FModelScale;
+    RenderVerts[OutIdx+2].Y := CY + Wy * (MinSize / 100) * FModelScale;
+    RenderVerts[OutIdx+2].Z := 1.0;
+    RenderVerts[OutIdx+2].RHW := 1.0;
+    if gTris[I].T2 >= 0 then
+    begin
+      RenderVerts[OutIdx+2].U := gUVs[gTris[I].T2].U;
+      RenderVerts[OutIdx+2].V := 1.0 - gUVs[gTris[I].T2].V;
+    end
+    else
+    begin
+      RenderVerts[OutIdx+2].U := 0;
+      RenderVerts[OutIdx+2].V := 0;
+    end;
+
+    // Цвет
+    if (gTris[I].MatIdx >= 0) and (gTris[I].MatIdx <= High(gMats)) then
+      BaseColor := gMats[gTris[I].MatIdx].Color
+    else
+      BaseColor := $FFBEBEBE;
+    R := (BaseColor shr 0)  and $FF;
+    G := (BaseColor shr 8)  and $FF;
+    B := (BaseColor shr 16) and $FF;
+    R := Round(R * Intensity);
+    G := Round(G * Intensity);
+    B := Round(B * Intensity);
+    BaseColor := $FF000000 or (B shl 16) or (G shl 8) or R;
+    RenderVerts[OutIdx].Color := BaseColor;
+    RenderVerts[OutIdx+1].Color := BaseColor;
+    RenderVerts[OutIdx+2].Color := BaseColor;
+
+    OutMats[OutIdx div 3] := gTris[I].MatIdx;
+    Inc(OutIdx, 3);
+  end;
+
+  if OutIdx = 0 then Exit;
+  TCount := OutIdx div 3;
+
+  // Рендер (без BigClip — ангар сам клипает через ClipRect)
+  Direct3DDevice.SetFVF(D3DFVF_XYZRHW or D3DFVF_DIFFUSE or D3DFVF_TEX1);
+  Direct3DDevice.SetTextureStageState(0, D3DTSS_ALPHAOP, D3DTOP_MODULATE);
+
+  I := 0;
+  while I < TCount do
+  begin
+    CurMatIdx := OutMats[I];
+    RunStart := I;
+    while (I < TCount) and (OutMats[I] = CurMatIdx) do
+      Inc(I);
+    RunCount := I - RunStart;
+    if (CurMatIdx >= 0) and (CurMatIdx <= High(gMats)) then
+      CurTex := gMats[CurMatIdx].Texture
+    else
+      CurTex := nil;
+    Direct3DDevice.SetTexture(0, CurTex);
+    Direct3DDevice.DrawPrimitiveUP(
+      D3DPT_TRIANGLELIST, RunCount,
+      @RenderVerts[RunStart * 3], SizeOf(TScreenVertexGR));
+  end;
   Direct3DDevice.SetTexture(0, nil);
 end;
 

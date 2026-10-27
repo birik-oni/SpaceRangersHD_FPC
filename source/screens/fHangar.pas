@@ -66,7 +66,7 @@ type
     procedure AmbientAnimationComplete(Sender: TObjectGI);
     procedure StartAmbientAnimation(Timer: PCallbackTimerGI; UserData: PtrInt);
     function GetShipPortraitScale(Ship: TShip): Single;
-    procedure LoadDockedShipImage(Index: Integer; ImagePath: WideString; LargeHull: Boolean; Scale: Single);
+    procedure LoadDockedShipImage(Index: Integer; ImagePath: WideString; Ship: TShip; LargeHull: Boolean; Scale: Single);
     procedure SetDockedShipOpacity(Index: Integer; Alpha: Byte);
     procedure AnimateDockedShips(Timer: PCallbackTimerGI; UserData: PtrInt);
     procedure RefreshDockedShips;
@@ -84,6 +84,9 @@ const
 implementation
 
 uses
+  {$IFDEF MSWINDOWS}
+  Windows,
+  {$ENDIF}
   GameDiagnostics,
   fEquipmentShop,
   GameInput,
@@ -91,6 +94,7 @@ uses
   aRanger,
   aPirate,
   SE_Ship2,
+  SE_Ship3D,  // SR3D: for TShip3DPortraitGI
   SE_Ruins,
   SE_Star,
   aTranclucator,
@@ -1081,10 +1085,55 @@ begin
     Result := 1.0;
 end;
 
-procedure TfHangar.LoadDockedShipImage(Index: Integer; ImagePath: WideString; LargeHull: Boolean; Scale: Single);
+procedure TfHangar.LoadDockedShipImage(Index: Integer; ImagePath: WideString; Ship: TShip; LargeHull: Boolean; Scale: Single);
 var
   Width: Integer;
+  Ship3DPortrait: TShip3DPortraitGI;
+  Use3D: Boolean;
 begin
+  // SR3D: если корабль имеет GraphKey из SR3D_3D_HULLS (например SR_Test),
+  // рисуем статичный 3D-портрет вместо 2D-спрайта.
+  Use3D := False;
+  if (Ship <> nil) and (Ship.Graphic <> nil) then
+    Use3D := SR3D_ShouldUse3D(Ship.Graphic.GraphKey);
+  {$IFDEF MSWINDOWS}
+  OutputDebugStringA(PAnsiChar(AnsiString(Format(
+    'SR3D Hangar LoadDockedShipImage: idx=%d imagepath="%s" graphkey="%s" use3d=%s',
+    [Index, string(ImagePath),
+     string(Ship.Graphic.GraphKey),
+     BoolToStr(Use3D, True)]))));
+  {$ENDIF}
+  if Use3D then
+  begin
+    // Сначала очистим GraphBuf родительского TGraphBufGI, чтобы он
+    // не рисовал старую (ренджеровскую) картинку поверх нашего 3D.
+    with GetByName('Ship' + IntToStr(Index)) as TGraphBufGI do
+    begin
+      SetActive(True);
+      SourceHasPerPixelAlpha := True;
+      GraphBuf.Clear;
+      // Пустой размер — родитель не будет виден
+      SetSize(Classes.Point(0, 0));
+    end;
+    // Создаём 3D-портрет как child
+    Ship3DPortrait := TShip3DPortraitGI.Create(GetByName('Ship' + IntToStr(Index)));
+    Ship3DPortrait.SetActive(True);
+    if Index <= 0 then
+      Width := GiScalePixels(128)
+    else if Index <= 3 then
+      Width := GiScalePixels(100)
+    else
+      Width := GiScalePixels(80);
+    if LargeHull then
+      Inc(Width, Width div 2);
+    Width := Round(Width * Scale);
+    Ship3DPortrait.SetSize(Classes.Point(Width, Width));
+    Ship3DPortrait.SetOrigin(Classes.Point(Width div 2, Width div 2));
+    Ship3DPortrait.UpdateSubtreeHitBounds;
+    Exit;
+  end;
+
+  // Стандартная 2D-логика
   with GetByName('Ship' + IntToStr(Index)) as TGraphBufGI do
   begin
     SetActive(True);
@@ -1112,6 +1161,11 @@ end;
 
 procedure TfHangar.SetDockedShipOpacity(Index: Integer; Alpha: Byte);
 begin
+  // SR3D: если ImageBuffer пустой (3D-портрет), пропускаем —
+  // opacity управляется через alpha вершины в TShip3DPortraitGI.Draw.
+  if (ShipSlots[Index].ImageBuffer.Width = 0) or
+     (ShipSlots[Index].ImageBuffer.Height = 0) then
+    Exit;
   with GetByName('Ship' + IntToStr(Index)) as TGraphBufGI do
   begin
     GraphBuf.AllocateRgbaTight(ShipSlots[Index].ImageBuffer.Width, ShipSlots[Index].ImageBuffer.Height);
@@ -1210,7 +1264,7 @@ begin
       ShipSlots[I].ShipId := Ship.Id;
       ShipSlots[I].AnimationState := 1;
       ShipSlots[I].Opacity := 0;
-      LoadDockedShipImage(I, Path, LargeHull, GetShipPortraitScale(Ship));
+      LoadDockedShipImage(I, Path, Ship, LargeHull, GetShipPortraitScale(Ship));
       SetDockedShipOpacity(I, ShipSlots[I].Opacity);
     end;
   for I := Low(SlotOrder) to High(SlotOrder) do
@@ -1308,7 +1362,7 @@ begin
       ShipSlots[SlotOrder[I]].ShipId := Ship.Id;
       ShipSlots[SlotOrder[I]].AnimationState := 1;
       ShipSlots[SlotOrder[I]].Opacity := 0;
-      LoadDockedShipImage(SlotOrder[I], Path, LargeHull, GetShipPortraitScale(Ship));
+      LoadDockedShipImage(SlotOrder[I], Path, Ship, LargeHull, GetShipPortraitScale(Ship));
       // Native indexes the opacity by I here, before mapping through SlotOrder.
       SetDockedShipOpacity(SlotOrder[I], ShipSlots[I].Opacity);
     end;
@@ -1573,7 +1627,7 @@ begin
     (GetByName('ISWin') as TLabelGI).SetActive(False);
     (GetByName('InfoShipWin') as TLabelGI).SetActive(False);
   end;
-  BarWidth := Round(Sqrt(Ship.GetHull.Weight / HullBaseSize / Max(0.1, Ship.GetHull.GetFragilityFactor([]))) * 64);
+  BarWidth := Round(Sqrt(Ship.GetHull.Weight / HullBaseSize / Math.Max(0.1, Ship.GetHull.GetFragilityFactor([]))) * 64);
   BarWidth := Min(192, Max(32, BarWidth));
   with GetByName('InfoShipDurableLeft') as TImageGI do
   begin

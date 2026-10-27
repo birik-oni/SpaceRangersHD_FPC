@@ -2107,6 +2107,7 @@ uses
   Globals,
   aMyFunction,
   MessageText,
+  SE_Ship3D,  // SR3D: for SR3D_RegisterCustomShips call
   GlobalsV,
   Math,
   GameWindow,
@@ -4221,6 +4222,9 @@ begin
     ThreeDimensionalModeEnabled := ParseEnabledNameGI(UserSettingsConfig.GetParamByPathOrMarker('3D'));
   UiStyleConfig := MainDataConfig.GetBlockByPath('ML');
   GameDataConfig := MainDataConfig.GetBlockByPath('Data');
+  // SR3D: register custom SR3D ships (copies vanilla blocks in memory,
+  // does NOT touch any .dat files). Must run AFTER GameDataConfig is set.
+  SR3D_RegisterCustomShips;
   LoadInformationColorTags;
   UiDepthConfig := MainDataConfig.GetBlockByPath('ZPos');
   PlanetDepth := ExtractDecimalToSingleW(UiDepthConfig.GetParam('Planet'));

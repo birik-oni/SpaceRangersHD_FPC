@@ -3347,7 +3347,14 @@ begin
   end;
   Values := Block.GetParam('mFragilityByShipType');
   for HullKind := Low(HullFragilityByType) to High(HullFragilityByType) do
-    HullFragilityByType[HullKind] :=
+    // SR3D: htSRTest (custom test hull) has no entry in vanilla
+    // mFragilityByShipType (only 11 values for htRanger..htFlagship).
+    // Skip it to avoid GetSmeParEC parsing error; default fragility 1.0
+    // is fine — same as htRanger.
+    if HullKind = htSRTest then
+      HullFragilityByType[HullKind] := 1.0
+    else
+      HullFragilityByType[HullKind] :=
         ExtractDecimalToSingleW(ExtractDelimitedPartW(Values, Ord(HullKind) - Ord(Low(HullFragilityByType)), ','));
   Block := LanguageDataConfig.GetBlockByPath('Items.FuelTanks');
   FuelTanksBaseSize := StrToInt(AnsiString(Block.GetParam('AverageSize')));

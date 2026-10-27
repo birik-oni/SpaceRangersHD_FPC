@@ -50,7 +50,7 @@ type
     procedure SetFrameIndex(Value: Cardinal);
     procedure SetAlpha(Value: Byte);
     procedure SetImage(Path: WideString; ImageSize: TPoint; Pivot: TPoint);
-    function HitTestPixel(Point: TPoint): Boolean;
+    function HitTestPixel(Point: TPoint): Boolean; virtual;
     procedure LoadImageProperties(Block: TBlockParEC);
     function GetFrameCount: Cardinal;
     procedure QueueImagePath(PendingLoads: TList; Path: WideString);

@@ -3157,6 +3157,13 @@ begin
     RetainSpaceObject(Graphic, CreateSpaceObjectByName('Ship2', 'Ship.People.RangerOldFag', Classes.Point(0, 0)));
     Graphic.SetAlpha(0);
   end
+  else if GetHull.HullType = htSRTest then
+  begin
+    // SR3D: custom test hull. Always uses the SR_Test GraphKey (rendered
+    // as 3D by TShip3DGI). Currently only People race has this hull.
+    RetainSpaceObject(Graphic, CreateSpaceObjectByName('Ship2', 'Ship.People.SR_Test', Classes.Point(0, 0)));
+    Graphic.SetAlpha(0);
+  end
   else
   begin
     RetainSpaceObject(Graphic, TShip2SE.CreateEmpty);
